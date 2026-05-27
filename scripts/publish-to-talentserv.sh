@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Publish feat/ai-sdlc-assistant-hackathon to TalentServ and open a PR.
-# Prerequisites: gh auth login, access to create repos under github.com/TalentServ
+# Publish feat/ai-sdlc-assistant-hackathon and open a PR.
+#
+# Default target: TalentServ/ai-sdlc-assistant
+# Override if you lack org create permissions:
+#   REPO=jitendakumar/ai-sdlc-assistant ./scripts/publish-to-talentserv.sh
+#
+# Prerequisites: gh auth login
 
-REPO="TalentServ/ai-sdlc-assistant"
-BRANCH="feat/ai-sdlc-assistant-hackathon"
+REPO="${REPO:-TalentServ/ai-sdlc-assistant}"
+BRANCH="${BRANCH:-feat/ai-sdlc-assistant-hackathon}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 cd "$ROOT"
@@ -25,27 +30,56 @@ npm test
 npm run lint
 npm run build
 
-echo "==> Create GitHub repo (skip if it already exists)"
+echo "==> Resolve GitHub repository: ${REPO}"
+
 if ! gh repo view "$REPO" >/dev/null 2>&1; then
-  gh repo create "$REPO" \
+  echo "Repository not found. Attempting to create ${REPO}..."
+  if ! gh repo create "$REPO" \
     --public \
-    --description "AI SDLC Pipeline Assistant — Agentic Programming Hackathon Challenge 3"
+    --description "AI SDLC Pipeline Assistant — Agentic Programming Hackathon Challenge 3" 2>/tmp/gh-repo-create.err; then
+    echo
+    echo "Could not create ${REPO}."
+    cat /tmp/gh-repo-create.err
+    echo
+    echo "This usually means your GitHub user cannot create repos in the TalentServ org."
+    echo
+    echo "Fix options:"
+    echo "  1) Ask a TalentServ org admin to create github.com/TalentServ/ai-sdlc-assistant"
+    echo "     and grant you write access, then re-run this script."
+    echo "  2) Push to your personal account first, then transfer or open PR to TalentServ:"
+    echo "     REPO=\$(gh api user -q .login)/ai-sdlc-assistant ./scripts/publish-to-talentserv.sh"
+    echo "  3) Create the repo manually in GitHub UI, then re-run this script."
+    exit 1
+  fi
 fi
 
 echo "==> Configure remote and push branch"
 if ! git remote get-url origin >/dev/null 2>&1; then
   git remote add origin "https://github.com/${REPO}.git"
+else
+  git remote set-url origin "https://github.com/${REPO}.git"
 fi
 
 git push -u origin "$BRANCH"
 
-echo "==> Create pull request"
-gh pr create \
-  --repo "$REPO" \
-  --base main \
-  --head "$BRANCH" \
-  --title "feat: AI SDLC Pipeline Assistant (Hackathon Challenge 3)" \
-  --body "$(cat <<'EOF'
+echo "==> Create pull request (skip if one already exists)"
+if gh pr view --repo "$REPO" --head "$BRANCH" >/dev/null 2>&1; then
+  gh pr view --repo "$REPO" --head "$BRANCH"
+else
+  if gh api "repos/${REPO}/git/ref/heads/main" >/dev/null 2>&1; then
+    PR_BASE="main"
+  else
+    echo "Note: remote has no main branch yet. Opening PR may require a TalentServ admin"
+    echo "      to create the repo default branch first, or push main manually."
+    PR_BASE="main"
+  fi
+
+  gh pr create \
+    --repo "$REPO" \
+    --base "$PR_BASE" \
+    --head "$BRANCH" \
+    --title "feat: AI SDLC Pipeline Assistant (Hackathon Challenge 3)" \
+    --body "$(cat <<'EOF'
 ## Summary
 
 - Adds **AI SDLC Pipeline Assistant**: a Clerk-authenticated Next.js app that converts business requirements into a structured delivery pipeline (clarification, impact analysis, implementation plan, test plan, risks, readiness score).
@@ -74,13 +108,6 @@ gh pr create \
 - [ ] Manual: download exported `.md` report
 - [ ] Optional: set `OPENAI_API_KEY` and verify live agent output
 
-## Review notes (addressed before PR)
-
-- Fixed Next.js build failure by excluding `tests/` from app `tsconfig` and loosening Vitest reporter types.
-- Removed accidental stray file from repo root.
-- Streaming API skips mock delays under `VITEST=true` for fast CI.
-- `.env.local` remains gitignored; use `.env.example` for setup.
-
 ## Setup for reviewers
 
 ```bash
@@ -92,5 +119,6 @@ npm install && npm run dev
 See `docs/auth-setup.md`, `docs/demo-checklist.md`, and `docs/test-scenarios.md`.
 EOF
 )"
+fi
 
-echo "Done. PR URL above."
+echo "Done."
